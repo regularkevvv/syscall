@@ -1130,6 +1130,9 @@ impl<'a> WireReader<'a> {
 }
 
 #[cfg(test)]
+mod golden;
+
+#[cfg(test)]
 mod tests {
     use core::mem::{align_of, offset_of, size_of};
 
