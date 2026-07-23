@@ -1,9 +1,15 @@
-//! Complete AArch64 task state used by the precursor fork.
+//! Complete, architecture-explicit AArch64 register-state ABI carried by the
+//! foreign message protocol; used verbatim in both exit and reply records.
 
 #![forbid(unsafe_code)]
 
 use core::mem::size_of;
 
+/// Opaque frozen magic of the embedded state record: little-endian `b"LOLO"`.
+///
+/// Deliberately distinct from `FOREIGN_MAGIC` so that a frame at offset 0 and
+/// its embedded state header (at message offset 48) cannot be confused. This is
+/// a frozen wire value; never change it.
 pub const STATE_MAGIC: u32 = u32::from_le_bytes(*b"LOLO");
 pub const ARCHITECTURE_AARCH64: u16 = 1;
 pub const STATE_VERSION_V1: u16 = 1;

@@ -1,6 +1,7 @@
-// Golden wire fixtures generated from lolo_redox_uapi at kernel revision
-// b7a5c052fa803716adb5c6d9b56d9a8945602170 (E0 freeze). Regenerating requires
-// the E0 differential harness; do not hand-edit byte values.
+// Golden wire fixtures captured from the predecessor kernel-local UAPI crate at
+// kernel revision b7a5c052fa803716adb5c6d9b56d9a8945602170 (E0 freeze of the
+// downstream extraction). Do not hand-edit byte values; regeneration requires
+// the E0 differential harness.
 
 use super::*;
 use super::aarch64::*;
@@ -8,14 +9,14 @@ use core::mem::{align_of, offset_of, size_of};
 
 // ======================================================================
 // Shared builders and fuzz-corpus digest (emitted verbatim from the
-// generator so the fork re-runs the exact construction that produced the
+// generator so this crate re-runs the exact construction that produced the
 // captured bytes).
 // ======================================================================
 
 // Shared builders and the deterministic fuzz-corpus digest. This exact text is
 // compiled into the generator (via `include!`) and emitted verbatim into
 // `golden.rs` (via `include_str!`), so the values captured as byte fixtures are
-// guaranteed to be produced by the same construction the fork will re-run.
+// guaranteed to be produced by the same construction this crate will re-run.
 //
 // Every item here relies on the enclosing module's `use` of the foreign and
 // aarch64 items; it deliberately contains no `use` of its own so it drops
@@ -190,7 +191,7 @@ fn operation_on_wire(request: &ForeignWaitU32RequestV1) -> u16 {
     u16::from_le_bytes([b[6], b[7]])
 }
 
-/// SplitMix64: copied verbatim from the M8 deterministic wire-fuzz test so the
+/// SplitMix64: copied verbatim from the deterministic wire-fuzz test so the
 /// frozen corpus is bit-identical. Do not modernize.
 fn next_fuzz_word(seed: &mut u64) -> u64 {
     *seed = seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
@@ -259,7 +260,7 @@ fn wait_operation_tag(operation: WaitOperation) -> u8 {
     }
 }
 
-/// Replay the exact M8 fuzz corpus (two loops of 16384 cases, one shared
+/// Replay the exact frozen fuzz corpus (two loops of 16384 cases, one shared
 /// SplitMix64 stream seeded with `0x4c4f_4c4f_4d38_4655`) and fold an FNV-1a
 /// digest over each input buffer, its decode/classify outcome tags, and the
 /// re-encoded bytes. Adding the hashing consumes no RNG words, so the corpus is
@@ -1273,7 +1274,7 @@ const GOLDEN_WAIT_INTERRUPT: [u8; 64] = [
 ];
 
 // ======================================================================
-// Encode golden vectors: the fork's to_wire_bytes must reproduce the frozen
+// Encode golden vectors: this crate's to_wire_bytes must reproduce the frozen
 // bytes exactly.
 // ======================================================================
 
@@ -1341,7 +1342,7 @@ fn wire_field_offsets_carry_expected_le_values() {
     assert_eq!(&bytes[24..32], &0x99aa_bbcc_ddee_ff00_u64.to_le_bytes());
     assert_eq!(&bytes[32..40], &0x0102_0304_0506_0708_u64.to_le_bytes());
     assert_eq!(&bytes[40..48], &[0_u8; 8]);
-    // Embedded M1 state header starts at offset 48.
+    // Embedded state header starts at offset 48.
     assert_eq!(&bytes[48..52], b"LOLO");
     assert_eq!(&bytes[48..52], &STATE_MAGIC.to_le_bytes());
     // V1 exit tail is all zero.
@@ -1360,7 +1361,7 @@ fn sequence_token_survives_wire_at_fixed_offset() {
 // ======================================================================
 // Decode golden vectors: decoding the frozen bytes must reproduce the exact
 // value and every semantic accessor. These bytes are frozen, so the decode is
-// independent of the fork's own to_wire_bytes.
+// independent of this crate's own to_wire_bytes.
 // ======================================================================
 
 #[test]
@@ -2497,7 +2498,7 @@ fn wait_operation_wire_encoding_is_frozen() {
 }
 
 // ======================================================================
-// Fuzz-corpus digest (32,768 frozen cases). Recomputed by the fork and
+// Fuzz-corpus digest (32,768 frozen cases). Recomputed by this crate and
 // asserted equal, so any seed / constant / decode-behavior drift fails.
 // ======================================================================
 

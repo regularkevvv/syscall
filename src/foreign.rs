@@ -12,6 +12,65 @@
 //! language runtime, or a sandbox. No guest syscall number, errno, or signal
 //! number appears here: the broker interprets AArch64 state; the kernel only
 //! reports the trap.
+//!
+//! # Wire layout
+//!
+//! Every field is little-endian with no implicit padding, so a non-Rust broker
+//! can implement the protocol from these tables alone. The fixed exit/reply
+//! frame is [`FOREIGN_MESSAGE_V1_WIRE_SIZE`] (976) bytes:
+//!
+//! | Offset | Size | Field | Notes |
+//! |-------:|-----:|-------|-------|
+//! | 0 | 4 | `magic` | u32, little-endian `b"LFOR"` ([`FOREIGN_MAGIC`]) |
+//! | 4 | 2 | `version` | u16 protocol version |
+//! | 6 | 2 | `architecture` | u16, `1` = AArch64 ([`FOREIGN_ARCH_AARCH64`]) |
+//! | 8 | 4 | `size` | u32, always 976 |
+//! | 12 | 4 | `code` | u32 exit reason or reply kind |
+//! | 16 | 8 | `domain_id` | u64 opaque domain token |
+//! | 24 | 8 | `task_id` | u64 opaque task token |
+//! | 32 | 8 | `sequence` | u64 monotonic exit-sequence token |
+//! | 40 | 8 | `flags` | u64, reserved, must be zero |
+//! | 48 | 896 | `state` | [`Aarch64StateV1`] register record (see below) |
+//! | 944 | 32 | `reserved` | four u64 tail words |
+//!
+//! The embedded [`Aarch64StateV1`] begins at frame offset 48 and carries its
+//! own [`StateHeader`](aarch64::StateHeader), whose magic is
+//! [`STATE_MAGIC`](aarch64::STATE_MAGIC) (`b"LOLO"`), deliberately distinct from
+//! [`FOREIGN_MAGIC`] so the embedded state header cannot be confused with the
+//! surrounding frame. Its fields, at offsets relative to that 48-byte base:
+//!
+//! | Offset | Size | Field |
+//! |-------:|-----:|-------|
+//! | 0 | 16 | `header` (magic u32, version u16, architecture u16, size u32, flags u32) |
+//! | 16 | 248 | `x[0..31]` general registers, u64 each |
+//! | 264 | 8 | `sp` |
+//! | 272 | 8 | `pc` |
+//! | 280 | 8 | `pstate` |
+//! | 288 | 8 | `tpidr_el0` |
+//! | 296 | 8 | `tpidrro_el0` |
+//! | 304 | 512 | `vectors[0..32]`, each `{ low: u64, high: u64 }` |
+//! | 816 | 4 | `fpcr` |
+//! | 820 | 4 | `fpsr` |
+//! | 824 | 32 | `exception` (kind u32, flags u32, esr u64, far u64, pc u64) |
+//! | 856 | 40 | `reserved[0..5]`, u64 each, always zero |
+//!
+//! The four-word tail at frame offset 944 is all zero for V1 frames and for
+//! every reply. On a V2 [`ExitReason::Kick`] its first word (`reserved[0]`, at
+//! frame offset 944) carries the [`KickOrigin`] wire value; on a V3-or-later
+//! [`ExitReason::WaitComplete`] that same word carries the [`WaitOutcome`] wire
+//! value. All other tail words stay zero.
+//!
+//! # Sub-protocols
+//!
+//! A broker endpoint mints task-bound capabilities by `dup`-ing a decimal task
+//! token appended to a fixed handle prefix:
+//!
+//! - task-bound memory: [`FOREIGN_MEMORY_HANDLE_PREFIX`] (`"memory/"`), driven
+//!   through the positioned read/write scheme interface with no pointer-bearing
+//!   record.
+//! - atomic-u32: [`FOREIGN_ATOMIC_U32_HANDLE_PREFIX`] (`"atomic-u32/"`).
+//! - atomic wait/wake: [`FOREIGN_WAIT_U32_HANDLE_PREFIX`] (`"wait-u32/"`),
+//!   carrying the fixed [`ForeignWaitU32RequestV1`] request record.
 
 #![forbid(unsafe_code)]
 
@@ -156,6 +215,9 @@ pub mod domain_op {
     /// is opened or any task is attached. This operation requires protocol V4
     /// so an older controller cannot silently configure only part of a limit
     /// set it does not understand.
+    ///
+    /// All six values are counts, not byte sizes, and are carried as
+    /// native-width words in the fixed order shown above.
     pub const SET_LIMITS_V1: usize = 7;
 }
 
@@ -214,6 +276,8 @@ pub struct ForeignMessageV1 {
 
 /// Size of the fixed foreign message record in bytes.
 pub const FOREIGN_MESSAGE_V1_SIZE: u32 = size_of::<ForeignMessageV1>() as u32;
+/// The fixed wire length in bytes, equal to [`FOREIGN_MESSAGE_V1_SIZE`]; this is
+/// the exact buffer length [`ForeignMessageV1::from_wire_bytes`] accepts.
 pub const FOREIGN_MESSAGE_V1_WIRE_SIZE: usize = FOREIGN_MESSAGE_V1_SIZE as usize;
 
 impl Default for ForeignHeader {
@@ -336,6 +400,25 @@ const WAIT_OPERATION_INTERRUPT: u16 = 4;
 /// `count` is a wake bound and `requeue_count` is the number to move after the
 /// requested wake count. All unused fields must be zero, making a future ABI
 /// extension fail closed.
+///
+/// The record is [`FOREIGN_WAIT_U32_REQUEST_V1_WIRE_SIZE`] (64) little-endian
+/// bytes with no implicit padding:
+///
+/// | Offset | Size | Field | Notes |
+/// |-------:|-----:|-------|-------|
+/// | 0 | 4 | `magic` | u32, little-endian `b"LWAT"` ([`FOREIGN_WAIT_U32_MAGIC`]) |
+/// | 4 | 2 | `version` | u16, `1` ([`FOREIGN_WAIT_U32_VERSION_V1`]) |
+/// | 6 | 2 | `operation` | u16 discriminant |
+/// | 8 | 4 | `size` | u32, always 64 |
+/// | 12 | 4 | reserved | must be zero |
+/// | 16 | 8 | `sequence` | u64 |
+/// | 24 | 8 | `address` | u64 |
+/// | 32 | 4 | `expected` | u32 |
+/// | 36 | 4 | `count` | u32 wake bound |
+/// | 40 | 8 | `timeout_ns` | u64 |
+/// | 48 | 8 | `address2` | u64 requeue target |
+/// | 56 | 4 | `requeue_count` | u32 |
+/// | 60 | 4 | reserved | must be zero |
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ForeignWaitU32RequestV1 {
     pub operation: WaitOperation,

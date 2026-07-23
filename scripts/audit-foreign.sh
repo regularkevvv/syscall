@@ -45,11 +45,16 @@ if rg -ns '\bunsafe\b|asm!|global_asm!|naked_asm' $FOREIGN_FILES; then
 fi
 
 # ----------------------------------------------------------------------
-# (b) No Linux-policy or Lolo identifiers (case-sensitive, word-boundary).
-# b"LFOR" / b"LWAT" / b"LOLO" and 0x.. byte literals do not match these.
+# (b) No Linux-policy, Lolo, or milestone identifiers.
+# The `SYS_`/`LINUX_`/`Linux` patterns stay case-sensitive and word-bounded.
+# `lolo`/`Lolo` are matched as substrings so predecessor naming cannot slip
+# through inside a larger token (e.g. a crate name); this is deliberately
+# lowercase-`l` only, so the sanctioned uppercase b"LOLO" state magic and 0x..
+# byte literals never match. `\bM[0-8]\b` catches leftover milestone tokens
+# (M0..M8) in the extracted sources.
 # ----------------------------------------------------------------------
-if rg -ns 'SYS_[A-Z]|LINUX_|linuxd|\bLinux\b|\bLolo\b|\blolo\b' $FOREIGN_FILES; then
-    fail "Linux-policy or Lolo identifier found in foreign sources"
+if rg -ns 'SYS_[A-Z]|LINUX_|linuxd|\bLinux\b|\bLolo\b|\blolo\b|lolo|Lolo|\bM[0-8]\b' $FOREIGN_FILES; then
+    fail "Linux-policy, Lolo, or milestone identifier found in foreign sources"
 fi
 
 # ----------------------------------------------------------------------
