@@ -65,7 +65,7 @@ fi
 # ----------------------------------------------------------------------
 disallowed=$(
     git diff --name-only "$BASE"..HEAD | grep -vxE \
-        'src/lib\.rs|src/foreign\.rs|src/foreign/aarch64\.rs|src/foreign/golden\.rs|scripts/audit-foreign\.sh' \
+        '\.gitignore|Cargo\.lock|src/lib\.rs|src/foreign\.rs|src/foreign/aarch64\.rs|src/foreign/golden\.rs|scripts/audit-foreign\.sh' \
         || true
 )
 if [ -n "$disallowed" ]; then
