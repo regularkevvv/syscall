@@ -36,7 +36,7 @@ pub const PSTATE_UAO: u64 = 1 << 23;
 pub const PSTATE_FORBIDDEN_RESUME_MASK: u64 =
     PSTATE_MODE_MASK | PSTATE_DAIF_MASK | PSTATE_IL | PSTATE_SINGLE_STEP;
 
-/// M1 does not expose single-step control. A later protocol version may add it
+/// This state ABI does not expose single-step control. A later protocol version may add it
 /// only if the foreign execution mechanism needs it.
 pub const SINGLE_STEP_SUPPORTED: bool = false;
 
@@ -329,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn classifies_m1_lower_el_exceptions() {
+    fn classifies_lower_el_exceptions() {
         assert_eq!(classify_exception(0x15 << 26), EXCEPTION_SUPERVISOR_CALL);
         assert_eq!(classify_exception(0x24 << 26), EXCEPTION_DATA_ABORT);
         assert_eq!(classify_exception(0x20 << 26), EXCEPTION_INSTRUCTION_ABORT);

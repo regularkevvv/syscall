@@ -1,15 +1,17 @@
-//! Versioned foreign-domain trap/reply protocol shared by the Lolo Redox fork
-//! and its userspace supervisor.
+//! Versioned foreign-domain trap/reply protocol shared by the kernel and an
+//! unprivileged foreign-task broker.
 //!
-//! This is the M2 mechanism: the kernel diverts every `svc` and unhandled
-//! architectural exception from an attached foreign task into a broker-owned
-//! queue as a [`ForeignMessageV1`] exit record, and the broker replies with the
-//! same record shape to resume or terminate the task. The register payload is
-//! the M1 [`Aarch64StateV1`] so that every broker-provided register update flows
-//! through the M1 validation boundary; there is exactly one register layout.
+//! The kernel diverts every `svc` and unhandled architectural exception from an
+//! attached foreign task into a broker-owned queue as a [`ForeignMessageV1`]
+//! exit record, and the broker replies with the same record shape to resume or
+//! terminate the task. The register payload is the [`Aarch64StateV1`] so that
+//! every broker-provided register update flows through the same validation
+//! boundary; there is exactly one register layout.
 //!
-//! No Linux syscall number, errno, or signal number appears here. The broker
-//! interprets AArch64 state; the kernel only reports the trap.
+//! The broker is any unprivileged supervisor of foreign tasks -- a debugger, a
+//! language runtime, or a sandbox. No guest syscall number, errno, or signal
+//! number appears here: the broker interprets AArch64 state; the kernel only
+//! reports the trap.
 
 #![forbid(unsafe_code)]
 
@@ -22,16 +24,16 @@ pub mod aarch64;
 
 /// Magic identifying a foreign exit/reply record: little-endian `b"LFOR"`.
 ///
-/// Distinct from the M1 state magic so a stale M1 state cannot be replayed as a
-/// foreign message, or vice versa.
+/// Distinct from the register-state magic so a stale register state cannot be
+/// replayed as a foreign message, or vice versa.
 pub const FOREIGN_MAGIC: u32 = u32::from_le_bytes(*b"LFOR");
 /// Original protocol version carried by [`ForeignMessageV1`].
 ///
 /// V1 has only supervisor-call, architectural-exception, and task-death exit
-/// reasons. Existing M2 domains remain on this version unless their trusted
+/// reasons. Existing domains remain on this version unless their trusted
 /// controller explicitly selects V2 before opening a broker endpoint.
 pub const FOREIGN_VERSION_V1: u16 = 1;
-/// M5 lifecycle protocol version.
+/// Lifecycle protocol version.
 ///
 /// V2 preserves the fixed 976-byte wire layout, but adds the checked `Kick`
 /// exit reason. For a V2 `Kick` exit only, the first word of the existing tail
@@ -40,19 +42,19 @@ pub const FOREIGN_VERSION_V1: u16 = 1;
 /// layout-stable lets a broker reject an unsupported domain protocol before it
 /// starts supervising tasks.
 pub const FOREIGN_VERSION_V2: u16 = 2;
-/// M6 atomic wait/wake protocol version.
+/// Atomic wait/wake protocol version.
 ///
 /// V3 preserves the existing fixed exit/reply frame and adds a checked
 /// `WaitComplete` exit.  The separate wait-operation request below is also
 /// versioned, so neither a broker nor the kernel can reinterpret an older
 /// lifecycle record as a wait completion.
 pub const FOREIGN_VERSION_V3: u16 = 3;
-/// M8 resource-governance protocol version.
+/// Resource-governance protocol version.
 ///
 /// V4 preserves the fixed V3 exit/reply frame and generic atomic-wait request.
 /// It adds a pre-activation domain-control operation for selecting explicit
-/// resource limits. The limits are kernel policy for one trust domain, not
-/// Linux process, cgroup, or futex policy; V1--V3 callers keep their bounded
+/// resource limits. The limits are kernel policy for one trust domain, not a
+/// guest OS resource policy; V1--V3 callers keep their bounded
 /// default limits without having to understand the V4 control operation.
 pub const FOREIGN_VERSION_V4: u16 = 4;
 /// Whether this crate can safely decode the selected protocol version.
@@ -79,7 +81,7 @@ pub const EXIT_TASK_DEATH: u32 = 3;
 pub const EXIT_KICK: u32 = 4;
 /// Exit reason: a generic atomic wait completed.
 ///
-/// This is deliberately not a Linux futex result. The broker receives the
+/// This is deliberately not a guest wait result. The broker receives the
 /// generic completion fact and chooses any guest ABI-visible return value in
 /// its normal, validated resume reply.
 pub const EXIT_WAIT_COMPLETE: u32 = 5;
@@ -96,7 +98,7 @@ pub const REPLY_RESUME: u32 = 0x101;
 /// Reply kind: terminate the task.
 pub const REPLY_TERMINATE: u32 = 0x102;
 
-/// Version of the task-bound foreign-memory capability introduced by M3.
+/// Version of the task-bound foreign-memory capability.
 ///
 /// The memory operations themselves use the normal positioned `read`/`write`
 /// scheme interface, so there is no pointer-bearing request record. The version
@@ -121,13 +123,13 @@ pub const FOREIGN_MEMORY_HANDLE_PREFIX: &str = "memory/";
 /// A caller can therefore distinguish exact copies from sequentially
 /// consistent atomic load and compare-exchange operations at the ABI level.
 pub const FOREIGN_ATOMIC_U32_HANDLE_PREFIX: &str = "atomic-u32/";
-/// `dup` path prefix used on a broker endpoint to mint an M6 atomic-wait
+/// `dup` path prefix used on a broker endpoint to mint an atomic-wait
 /// capability. The decimal task token follows this prefix.
 pub const FOREIGN_WAIT_U32_HANDLE_PREFIX: &str = "wait-u32/";
 
 /// Control opcodes written to a foreign-domain control handle. The payload is a
 /// sequence of native-width words: `[opcode, arg0, ...]`. These name control
-/// actions on the domain, never Linux operations.
+/// actions on the domain, never guest operations.
 pub mod domain_op {
     /// `[SET_CAPACITY, capacity]` — set the exit-queue bound before any attach.
     pub const SET_CAPACITY: usize = 0;
@@ -139,7 +141,7 @@ pub mod domain_op {
     pub const DESTROY: usize = 3;
     /// `[SET_PROTOCOL_VERSION, version]` — select a supported protocol before
     /// a broker endpoint is opened or a task is attached. Domains default to
-    /// V1 so pre-M5 userspace keeps its exact contract.
+    /// V1 so earlier userspace keeps its exact contract.
     pub const SET_PROTOCOL_VERSION: usize = 4;
     /// `[KICK, task_fd]` — request one checked lifecycle interruption for the
     /// attached task referenced by the supplied process capability.
@@ -150,7 +152,7 @@ pub mod domain_op {
     pub const CANCEL: usize = 6;
     /// `[SET_LIMITS_V1, normal_exits, lifecycle_exits, tasks,
     /// outstanding_replies, transient_copy_pages, wait_registrations]` — set
-    /// the complete M8 per-domain resource budget before the broker endpoint
+    /// the complete per-domain resource budget before the broker endpoint
     /// is opened or any task is attached. This operation requires protocol V4
     /// so an older controller cannot silently configure only part of a limit
     /// set it does not understand.
@@ -183,7 +185,7 @@ pub struct ForeignHeader {
 /// A foreign exit record (kernel → broker) or reply record (broker → kernel).
 ///
 /// One fixed-width, architecture-explicit layout is used in both directions.
-/// The register payload reuses the M1 [`Aarch64StateV1`] verbatim; there is no
+/// The register payload reuses the [`Aarch64StateV1`] verbatim; there is no
 /// second register ABI to keep in sync.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(C, align(16))]
@@ -284,9 +286,9 @@ pub enum KickOrigin {
     Exception,
 }
 
-/// A kernel-mechanism outcome for an M6 atomic wait.
+/// A kernel-mechanism outcome for an atomic wait.
 ///
-/// These values intentionally do not encode a Linux errno, signal, or futex
+/// These values intentionally do not encode a guest errno, signal, or wait
 /// operation. A broker maps the fact to its own guest ABI in a later reply.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WaitOutcome {
@@ -301,18 +303,18 @@ const WAIT_OUTCOME_TIMED_OUT: u64 = 1;
 const WAIT_OUTCOME_INTERRUPTED: u64 = 2;
 const WAIT_OUTCOME_MAPPING_INVALIDATED: u64 = 3;
 
-/// Magic identifying an M6 atomic-wait operation request: little-endian
+/// Magic identifying an atomic-wait operation request: little-endian
 /// `b"LWAT"`.
 pub const FOREIGN_WAIT_U32_MAGIC: u32 = u32::from_le_bytes(*b"LWAT");
-/// First fixed request version for M6 atomic wait/wake operations.
+/// First fixed request version for atomic wait/wake operations.
 pub const FOREIGN_WAIT_U32_VERSION_V1: u16 = 1;
 /// No timeout. Any other timeout is a relative monotonic duration in
-/// nanoseconds, not a Linux clock or flag combination.
+/// nanoseconds, not a guest clock or flag combination.
 pub const FOREIGN_WAIT_U32_NO_TIMEOUT: u64 = u64::MAX;
 /// Fixed byte length of [`ForeignWaitU32RequestV1`] on the wire.
 pub const FOREIGN_WAIT_U32_REQUEST_V1_WIRE_SIZE: usize = 64;
 
-/// Generic operations accepted by a task-bound M6 wait capability.
+/// Generic operations accepted by a task-bound wait capability.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WaitOperation {
     Park,
@@ -540,7 +542,7 @@ pub enum ReplyKind {
 
 impl ForeignMessageV1 {
     /// Build an exit record. Used by the kernel; the register `state` must
-    /// already be a valid M1 snapshot for supervisor-call/exception exits, and
+    /// already be a valid register snapshot for supervisor-call/exception exits, and
     /// is left at its default for death exits.
     #[must_use]
     pub fn new_exit(
@@ -564,7 +566,7 @@ impl ForeignMessageV1 {
     ///
     /// The protocol choice belongs to the trusted domain controller and is
     /// fixed before a broker or task exists. Returning an error instead of
-    /// silently downgrading means a kernel bug cannot turn an M5 `Kick` into a
+    /// silently downgrading means a kernel bug cannot turn a lifecycle `Kick` into a
     /// different V1 event.
     pub fn new_exit_for_version(
         version: u16,
@@ -625,8 +627,8 @@ impl ForeignMessageV1 {
 
     /// Build a V2-or-later lifecycle interruption record.
     ///
-    /// V3 keeps the exact M5 `Kick` spelling so controlled lifecycle actions
-    /// remain available while M6 wait operations are enabled.
+    /// V3 keeps the exact V2 `Kick` spelling so controlled lifecycle actions
+    /// remain available while V3 wait operations are enabled.
     pub fn new_kick_exit_for_version(
         version: u16,
         domain_id: u64,
@@ -1154,7 +1156,7 @@ mod tests {
     }
 
     #[test]
-    fn magic_is_distinct_from_m1_state_magic() {
+    fn magic_is_distinct_from_state_magic() {
         assert_ne!(FOREIGN_MAGIC, STATE_MAGIC);
     }
 
@@ -1326,7 +1328,7 @@ mod tests {
     }
 
     #[test]
-    fn m8_deterministic_wire_fuzz_never_reinterprets_or_panics() {
+    fn deterministic_wire_fuzz_never_reinterprets_or_panics() {
         // This intentionally uses no random crate or test-time entropy: every
         // CI run exercises the same 16k hostile exit/reply/state inputs and
         // can reproduce a failure from the initial seed. `from_wire_bytes`
