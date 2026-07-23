@@ -51,3 +51,6 @@ pub mod sigabi;
 
 /// V2 scheme format
 pub mod schemev2;
+
+/// Generic foreign-execution ABI shared between the kernel and an unprivileged foreign-task broker.
+pub mod foreign;
